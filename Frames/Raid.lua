@@ -188,8 +188,7 @@ function UUFPLUS:SpawnRaidFrames()
     UUFPLUS.RaidHeader:SetPoint(layout[1], UIParent, layout[2], layout[3], layout[4])
     UUFPLUS.RaidHeader:SetFrameStrata(db.Frame.FrameStrata)
 
-    -- HideBlizzard is shared with party; only call once (party handles it if enabled there too)
-    if db.HideBlizzard and not (UUFPLUS.db.profile.Party.Enabled and UUFPLUS.db.profile.Party.HideBlizzard) then
+    if db.HideBlizzard then
         UUFPLUS:HideBlizzardGroupFrames()
     end
 end

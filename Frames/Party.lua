@@ -207,7 +207,7 @@ local function CreatePartyFrame(self)
     hpText:SetFont(UUF.Media.Font, 9, UUF.Media.FontFlag)
     hpText:SetPoint("RIGHT", health, -2, -1)
     hpText:SetJustifyH("RIGHT")
-    self:Tag(hpText, "[perhp<%]")
+    self:Tag(hpText, "[perhp]")
 
     -- Range fader
     self.Range = {

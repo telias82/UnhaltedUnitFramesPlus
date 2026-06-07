@@ -14,6 +14,8 @@ function UnhaltedUnitFramesPlus:OnEnable()
 end
 
 function UUFPLUS:HideBlizzardGroupFrames()
+    if UUFPLUS._blizzardFramesHidden then return end
+    UUFPLUS._blizzardFramesHidden = true
     if CompactRaidFrameManager then
         CompactRaidFrameManager:UnregisterAllEvents()
         CompactRaidFrameManager:Hide()
