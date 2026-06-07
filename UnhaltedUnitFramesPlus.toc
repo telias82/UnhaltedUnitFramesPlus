@@ -1,0 +1,12 @@
+## Title: |cFF8080FFUnhalted|rUnitFrames Plus
+## Interface: 50000
+## Version: V1.0.0
+## Author: |cFF8080FFUnhalted|r
+## Notes: Party and Raid Frames extension for UnhaltedUnitFrames.
+## Dependencies: UnhaltedUnitFrames
+## SavedVariables: UUFPLUSDB
+## Category-enUS: |cFF8080FFUnhalted|r Development
+
+Core/Init.xml
+Config/Init.xml
+Frames/Init.xml
