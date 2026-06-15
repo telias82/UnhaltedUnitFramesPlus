@@ -1,4 +1,5 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/">
     <Script file="Party.lua"/>
     <Script file="Raid.lua"/>
+    <Script file="Preview.lua"/>
 </Ui>
