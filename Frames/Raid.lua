@@ -38,6 +38,30 @@ local function FilterCooldownBuff(element, unit, data)
     return UUFPLUS.CooldownBuffSpells[data.spellId] == true
 end
 
+local function UpdateStatusText(frame, unit)
+    local txt = frame._statusTxt
+    if not txt then return end
+    if not UnitIsConnected(unit) then
+        txt:SetText("Offline")
+        txt:SetTextColor(0.8, 0.8, 0.8)
+        txt:Show()
+    elseif UnitIsGhost(unit) then
+        txt:SetText("Ghost")
+        txt:SetTextColor(0.6, 0.4, 0.8)
+        txt:Show()
+    elseif UnitIsDead(unit) then
+        txt:SetText("Dead")
+        txt:SetTextColor(0.75, 0.2, 0.2)
+        txt:Show()
+    elseif UnitIsAFK(unit) then
+        txt:SetText("AFK")
+        txt:SetTextColor(0.8, 0.8, 0.2)
+        txt:Show()
+    else
+        txt:Hide()
+    end
+end
+
 local ROLE_ATLAS = {
     TANK    = "UI-LFG-RoleIcon-Tank-Micro-GroupFinder",
     HEALER  = "UI-LFG-RoleIcon-Healer-Micro-GroupFinder",
@@ -47,35 +71,6 @@ local ROLE_ATLAS = {
 local function ApplyRoleTexture(el, role)
     local atlas = ROLE_ATLAS[role]
     if atlas then el:SetAtlas(atlas) end
-end
-
-local function SetupStripeOverlay(bar, healthBar, isReverse)
-    local clipFrame = CreateFrame("Frame", nil, bar)
-    clipFrame:SetFrameLevel(bar:GetFrameLevel() + 1)
-    clipFrame:SetWidth(0.01)
-    if isReverse then
-        clipFrame:SetPoint("TOPRIGHT", bar, "TOPRIGHT")
-        clipFrame:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT")
-    else
-        clipFrame:SetPoint("TOPLEFT", bar, "TOPLEFT")
-        clipFrame:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT")
-    end
-    local tex = clipFrame:CreateTexture(nil, "OVERLAY")
-    tex:SetTexture("Interface\\RaidFrame\\Shield-Overlay")
-    tex:SetAllPoints(clipFrame)
-    clipFrame:Show()
-    bar.StripeClipFrame = clipFrame
-    local function refresh(self)
-        local cf = self.StripeClipFrame
-        if not cf or not cf:IsShown() then return end
-        local lo, hi = self:GetMinMaxValues()
-        local w = healthBar:GetWidth()
-        local val = self:GetValue()
-        if w <= 0 or hi <= lo or val <= lo then cf:SetWidth(0.01); return end
-        cf:SetWidth(math.max(0.01, w * (val - lo) / (hi - lo)))
-    end
-    bar:HookScript("OnValueChanged", refresh)
-    bar:HookScript("OnSizeChanged",  refresh)
 end
 
 local function CreateRaidFrame(self)
@@ -107,29 +102,30 @@ local function CreateRaidFrame(self)
     healthBG:SetVertexColor(0.15, 0.15, 0.15, db.HealthBar.BackgroundAlpha)
     health.bg = healthBG
 
-    -- "Offline" text shown centered on the frame when the unit disconnects.
-    -- Must be parented to health (a child Frame) so it renders above all child frames.
-    local offlineTxt = health:CreateFontString(nil, "OVERLAY")
-    offlineTxt:SetFont(UUF.Media.Font, db.OfflineFontSize or 10, UUF.Media.FontFlag)
-    offlineTxt:SetPoint("CENTER", self, "CENTER")
-    offlineTxt:SetText("Offline")
-    offlineTxt:SetTextColor(0.8, 0.8, 0.8)
-    offlineTxt:Hide()
-    self._offlineTxt = offlineTxt
+    -- Status text (Offline / Dead / Ghost / AFK) shown centered on the frame.
+    -- Parented to health so it renders above all child frames.
+    local statusTxt = health:CreateFontString(nil, "OVERLAY")
+    statusTxt:SetFont(UUF.Media.Font, db.OfflineFontSize or 10, UUF.Media.FontFlag)
+    local SL = db.StatusText and db.StatusText.Layout
+    statusTxt:SetPoint(SL and SL[1] or "CENTER", self, SL and SL[2] or "CENTER", SL and SL[3] or 0, SL and SL[4] or 0)
+    statusTxt:Hide()
+    self._statusTxt = statusTxt
 
-    -- PostUpdateColor fires on every color update including UNIT_CONNECTION.
-    -- Forces the bar to full and shows/hides the offline label.
+    -- PostUpdateColor fires on UNIT_CONNECTION and health colour changes.
+    -- Forces bar to full when offline; delegates label to UpdateStatusText.
     health.PostUpdateColor = function(element, unit, color)
-        local connected = UnitIsConnected(unit)
-        element.__owner._offlineTxt:SetShown(not connected)
-        if not connected then
+        if not UnitIsConnected(unit) then
             local max = UnitHealthMax(unit)
             if max > 0 then
                 element:SetMinMaxValues(0, max)
                 element:SetValue(max)
             end
         end
+        UpdateStatusText(element.__owner, unit)
     end
+
+    self:RegisterUnitEvent("UNIT_HEALTH", function(frame) UpdateStatusText(frame, frame.unit) end)
+    self:RegisterUnitEvent("UNIT_FLAGS",  function(frame) UpdateStatusText(frame, frame.unit) end)
 
     self.Health = health
 
@@ -155,40 +151,95 @@ local function CreateRaidFrame(self)
         self.Power = power
     end
 
-    -- Absorb / heal-absorb prediction (children of health, ATTACH mode)
+    -- Heal prediction + absorb overlay. oUF's HealthPrediction element owns all
+    -- event handling via Override; UpdateSize sets the heal bar width only
+    -- (absorb uses SetAllPoints and doesn't need it).
     if db.HealPrediction.Enabled then
-        local absorbColor = db.HealPrediction.AbsorbColor
+        local healthFill = health:GetStatusBarTexture()
+
+        -- Incoming heal bar — ATTACH, clipped at health bar boundary
+        local healBar = CreateFrame("StatusBar", nil, health)
+        healBar:SetPoint("TOPLEFT",    healthFill, "TOPRIGHT",    0, 0)
+        healBar:SetPoint("BOTTOMLEFT", healthFill, "BOTTOMRIGHT", 0, 0)
+        healBar:SetWidth(0.01)
+        healBar:SetFrameLevel(health:GetFrameLevel() + 1)
+        healBar:SetStatusBarTexture(UUF.Media.Foreground)
+        healBar:SetStatusBarColor(0.3, 1.0, 0.3, 0.6)
+        healBar:Hide()
+
+        -- Absorb bar — SUF over-absorb style, above the heal bar
         local absorbBar = CreateFrame("StatusBar", nil, health)
-        absorbBar:SetPoint("TOPLEFT",    health:GetStatusBarTexture(), "TOPRIGHT",    0, 0)
-        absorbBar:SetPoint("BOTTOMLEFT", health:GetStatusBarTexture(), "BOTTOMRIGHT", 0, 0)
-        absorbBar:SetWidth(200)
-        absorbBar:SetStatusBarTexture("Interface\\AddOns\\UnhaltedUnitFrames\\Media\\Textures\\Atrocity.tga")
-        absorbBar:SetStatusBarColor(absorbColor[1], absorbColor[2], absorbColor[3], absorbColor[4])
-        SetupStripeOverlay(absorbBar, health, false)
-        health.DamageAbsorb = absorbBar
-
-        local healAbsorbColor = db.HealPrediction.HealAbsorbColor
-        local healAbsorbBar = CreateFrame("StatusBar", nil, health)
-        healAbsorbBar:SetPoint("TOPRIGHT",    health:GetStatusBarTexture(), "TOPLEFT",    0, 0)
-        healAbsorbBar:SetPoint("BOTTOMRIGHT", health:GetStatusBarTexture(), "BOTTOMLEFT", 0, 0)
-        healAbsorbBar:SetWidth(200)
-        healAbsorbBar:SetStatusBarTexture("Interface\\AddOns\\UnhaltedUnitFrames\\Media\\Textures\\Atrocity.tga")
-        healAbsorbBar:SetStatusBarColor(healAbsorbColor[1], healAbsorbColor[2], healAbsorbColor[3], healAbsorbColor[4])
-        healAbsorbBar:SetReverseFill(true)
-        SetupStripeOverlay(healAbsorbBar, health, true)
-        health.HealAbsorb = healAbsorbBar
-
-        -- Clamp absorb bars so they never extend beyond the frame boundary.
-        health.PostUpdate = function(element, unit, cur, max, lossPerc)
-            if element.DamageAbsorb then
-                local raw = UnitGetTotalAbsorbs(unit) or 0
-                element.DamageAbsorb:SetValue(math.min(raw, math.max(0, max - cur)))
-            end
-            if element.HealAbsorb then
-                local raw = (UnitGetTotalHealAbsorbs and UnitGetTotalHealAbsorbs(unit)) or 0
-                element.HealAbsorb:SetValue(math.min(raw, math.max(0, cur)))
-            end
+        absorbBar:SetAllPoints(health)
+        absorbBar:SetReverseFill(true)
+        absorbBar:SetFrameLevel(health:GetFrameLevel() + 2)
+        absorbBar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Overlay")
+        local fillTex = absorbBar:GetStatusBarTexture()
+        if fillTex then
+            fillTex:SetTexture("Interface\\RaidFrame\\Shield-Overlay", "REPEAT", "REPEAT")
+            if fillTex.SetVertTile  then fillTex:SetVertTile(true)  end
+            if fillTex.SetHorizTile then fillTex:SetHorizTile(true) end
         end
+        absorbBar:SetMinMaxValues(0, 1)
+        absorbBar:SetValue(0)
+        absorbBar:Hide()
+
+        local absorbGlow = absorbBar:CreateTexture(nil, "OVERLAY")
+        absorbGlow:SetTexture("Interface\\RaidFrame\\Shield-Overshield")
+        absorbGlow:SetBlendMode("ADD")
+        absorbGlow:SetWidth(6)
+        absorbGlow:Hide()
+
+        local lastHP, lastMaxHP, lastHeal, lastAbsorb = -1, -1, -1, -1
+
+        self.HealthPrediction = {
+            healingAll   = healBar,
+            damageAbsorb = absorbBar,
+            UpdateSize = function(frame)
+                local barW = frame.Health:GetWidth()
+                if barW > 0 then healBar:SetWidth(barW) end
+            end,
+            Override = function(frame, event, unit)
+                if frame.unit ~= unit then return end
+                local hp     = UnitHealth(unit)
+                local maxHP  = UnitHealthMax(unit)
+                local heal   = math.min(UnitGetIncomingHeals(unit) or 0, maxHP - hp)
+                local amount = UnitGetTotalAbsorbs(unit) or 0
+
+                if hp == lastHP and maxHP == lastMaxHP and heal == lastHeal and amount == lastAbsorb then return end
+                lastHP = hp; lastMaxHP = maxHP; lastHeal = heal; lastAbsorb = amount
+
+                -- Incoming heals — clamped to missing HP so it never extends past the bar
+                if heal > 0 and maxHP > 0 then
+                    healBar:SetMinMaxValues(0, maxHP)
+                    healBar:SetValue(heal)
+                    healBar:Show()
+                else
+                    healBar:Hide()
+                end
+
+                -- Damage absorbs (SUF over-absorb)
+                if amount <= 0 or maxHP <= 0 then
+                    absorbBar:Hide(); absorbGlow:Hide(); return
+                end
+                local overAbsorb = math.min(amount - (maxHP - hp), maxHP)
+                absorbBar:SetMinMaxValues(0, maxHP)
+                absorbBar:SetValue(math.max(0, overAbsorb))
+                absorbBar:Show()
+                local barW = frame.Health:GetWidth()
+                if barW > 0 then
+                    local barOffset
+                    if overAbsorb > 0 then
+                        barOffset = (overAbsorb / maxHP) * barW
+                    else
+                        barOffset = math.max(0, maxHP - hp - amount) / maxHP * barW
+                    end
+                    -- SetPoint replaces an existing point of the same name; ClearAllPoints not needed
+                    absorbGlow:SetPoint("BOTTOMRIGHT", absorbBar, "BOTTOMRIGHT", -barOffset + 4, 0)
+                    absorbGlow:SetPoint("TOPRIGHT",    absorbBar, "TOPRIGHT",    -barOffset + 4, 0)
+                    absorbGlow:Show()
+                end
+            end,
+        }
     end
 
     -- Dispel highlight (reuses the element registered in Party.lua)
@@ -286,6 +337,25 @@ local function CreateRaidFrame(self)
     highContainer:SetFrameLevel(self:GetFrameLevel() + 100)
     self._highContainer = highContainer
 
+    -- Target glow border (hidden until PLAYER_TARGET_CHANGED fires)
+    do
+        local tDb = db.Indicators.Target
+        local tglow = CreateFrame("Frame", nil, self, "BackdropTemplate")
+        tglow:SetFrameLevel(highContainer:GetFrameLevel() + 1)
+        tglow:SetBackdrop({
+            edgeFile = "Interface\\AddOns\\UnhaltedUnitFrames\\Media\\Textures\\Glow.tga",
+            edgeSize = 3,
+            insets   = { left = -3, right = -3, top = -3, bottom = -3 },
+        })
+        tglow:SetBackdropColor(0, 0, 0, 0)
+        local C = tDb and tDb.Colour or { 1, 1, 0, 1 }
+        tglow:SetBackdropBorderColor(C[1], C[2], C[3], C[4] or 1)
+        tglow:SetPoint("TOPLEFT",     self, "TOPLEFT",     -3,  3)
+        tglow:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT",  3, -3)
+        tglow:SetAlpha(0)
+        self._targetGlow = tglow
+    end
+
     -- Raid target indicator (on highContainer so it always renders on top)
     do
         local mDb = db.Indicators.RaidTargetMarker
@@ -294,6 +364,17 @@ local function CreateRaidFrame(self)
         raidMarker:SetSize(mDb.Size, mDb.Size)
         raidMarker:SetPoint(L[1] or "TOPRIGHT", highContainer, L[2] or "TOPRIGHT", L[3] or 2, L[4] or 2)
         self.RaidTargetIndicator = raidMarker
+    end
+
+    -- Ready check indicator (oUF element handles events and fade animation)
+    do
+        local RC = db.ReadyCheck
+        local RL = RC and RC.Layout
+        local sz = (RC and RC.Size) or 14
+        local rci = highContainer:CreateTexture(nil, "OVERLAY")
+        rci:SetSize(sz, sz)
+        rci:SetPoint(RL and RL[1] or "CENTER", self, RL and RL[2] or "CENTER", RL and RL[3] or 0, RL and RL[4] or 0)
+        self.ReadyCheckIndicator = rci
     end
 
     -- Leader indicator
@@ -382,13 +463,15 @@ local function CreateRaidFrame(self)
                 frame.Power:SetShown(db.PowerBar.Enabled and (not db.PowerBar.HealerOnly or role == "HEALER"))
             end
 
-            if not db.Indicators.GroupRole.Enabled then el:Hide(); return end
+            local grDb = db.Indicators.GroupRole
+            if not grDb.Enabled then el:Hide(); return end
+            if grDb.HideInCombat and UnitAffectingCombat("player") then el:Hide(); return end
 
             if role == "TANK" or role == "HEALER" then
                 ApplyRoleTexture(el, role)
                 el:Show()
             elseif role == "DAMAGER" then
-                if not db.Indicators.GroupRole.HideDPS then
+                if not grDb.HideDPS then
                     ApplyRoleTexture(el, role)
                     el:Show()
                 else
@@ -480,8 +563,9 @@ function UUFPLUS:SpawnRaidFrames()
         local function sweepRaidPower()
             local h = UUFPLUS.RaidHeader
             if not h then return end
-            for i = 1, h:GetNumChildren() do
-                local child = select(i, h:GetChildren())
+            local children = {h:GetChildren()}
+            for i = 1, #children do
+                local child = children[i]
                 if child and child.unit then
                     ApplyRaidPowerVisibility(child)
                 end
@@ -508,9 +592,37 @@ function UUFPLUS:SpawnRaidFrames()
             h:ClearAllPoints()
             h:SetPoint(layout[1], UIParent, layout[2], layout[3], layout[4])
         end
+        local _raidPosPending = false
         local posFrame = CreateFrame("Frame")
         posFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
         posFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-        posFrame:SetScript("OnEvent", function() C_Timer.After(0, enforceRaidPos) end)
+        posFrame:SetScript("OnEvent", function()
+            if not _raidPosPending then
+                _raidPosPending = true
+                C_Timer.After(0, function()
+                    _raidPosPending = false
+                    enforceRaidPos()
+                end)
+            end
+        end)
+    end
+
+    -- Sweep group role icons on combat state change
+    do
+        local function sweepRaidRoleIcons()
+            local h = UUFPLUS.RaidHeader
+            if not h then return end
+            local children = {h:GetChildren()}
+            for i = 1, #children do
+                local child = children[i]
+                if child and child.GroupRoleIndicator and child.GroupRoleIndicator.Override then
+                    child.GroupRoleIndicator.Override(child, "PLAYER_REGEN_DISABLED")
+                end
+            end
+        end
+        local combatFrame = CreateFrame("Frame")
+        combatFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+        combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        combatFrame:SetScript("OnEvent", sweepRaidRoleIcons)
     end
 end
