@@ -53,17 +53,20 @@ local Defaults = {
                 OutOfRange = 0.5,
             },
             Indicators = {
-                GroupRole       = { Enabled = true, Size = 20, Layout = { "BOTTOMRIGHT", "BOTTOMRIGHT", 0, 0 }, HideDPS = false },
+                GroupRole       = { Enabled = true, Size = 20, Layout = { "BOTTOMRIGHT", "BOTTOMRIGHT", 0, 0 }, HideDPS = false, HideInCombat = false },
                 Leader          = { Enabled = true, Size = 12, Layout = { "TOPLEFT",     "TOPLEFT",     0, 0 } },
                 Assistant       = { Enabled = true, Size = 12, Layout = { "TOPLEFT",     "TOPLEFT",     0, 0 } },
                 RaidRole        = { Enabled = true, Size = 12, Layout = { "TOPLEFT",     "TOPLEFT",     0, 0 } },
                 RaidTargetMarker = { Size = 16, Layout = { "TOPRIGHT", "TOPRIGHT", 2, 2 } },
+                Target          = { Enabled = true, Colour = { 1, 1, 0, 1 } },
             },
             Tags = {
                 Name = { Tag = "[name]",         FontSize = 10, Colour = { 1, 1, 1 }, Layout = { "LEFT",  "LEFT",  2,  1  } },
                 HP   = { Tag = "[perhp:absorb]",  FontSize = 9,  Colour = { 1, 1, 1 }, Layout = { "RIGHT", "RIGHT", -2, -1 } },
             },
             OfflineFontSize = 10,
+            StatusText = { Layout = { "CENTER", "CENTER", 0, 0 } },
+            ReadyCheck = { Size = 16, Layout = { "CENTER", "CENTER", 0, 0 } },
         },
         Raid = {
             Enabled = true,
@@ -116,16 +119,19 @@ local Defaults = {
                 OutOfRange = 0.5,
             },
             Indicators = {
-                GroupRole        = { Enabled = true, Size = 16, Layout = { "BOTTOMRIGHT", "BOTTOMRIGHT", 0, 0 }, HideDPS = false },
+                GroupRole        = { Enabled = true, Size = 16, Layout = { "BOTTOMRIGHT", "BOTTOMRIGHT", 0, 0 }, HideDPS = false, HideInCombat = false },
                 Leader           = { Enabled = true, Size = 10, Layout = { "TOPLEFT",     "TOPLEFT",     0, 0 } },
                 Assistant        = { Enabled = true, Size = 10, Layout = { "TOPLEFT",     "TOPLEFT",     0, 0 } },
                 RaidRole         = { Enabled = true, Size = 10, Layout = { "TOPLEFT",     "TOPLEFT",     0, 0 } },
                 RaidTargetMarker = { Size = 12, Layout = { "TOPRIGHT", "TOPRIGHT", 2, 2 } },
+                Target           = { Enabled = true, Colour = { 1, 1, 0, 1 } },
             },
             Tags = {
                 Name = { Tag = "[name]", FontSize = 9, Colour = { 1, 1, 1 }, Layout = { "LEFT", "LEFT", 2, 0 } },
             },
             OfflineFontSize = 10,
+            StatusText = { Layout = { "CENTER", "CENTER", 0, 0 } },
+            ReadyCheck = { Size = 14, Layout = { "CENTER", "CENTER", 0, 0 } },
         },
     },
 }

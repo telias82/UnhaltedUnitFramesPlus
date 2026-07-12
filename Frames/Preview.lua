@@ -58,6 +58,21 @@ local ROLE_ATLAS = {
     DAMAGER = "UI-LFG-RoleIcon-DPS-Micro-GroupFinder",
 }
 
+local READY_CHECK_ATLAS = {
+    ready    = "UI-LFG-ReadyMark-Raid",
+    notready = "UI-LFG-DeclineMark-Raid",
+    waiting  = "UI-LFG-PendingMark-Raid",
+}
+
+-- Cycles through 5 preview states so each feature is visible in the grid.
+local PREVIEW_OPTS = {
+    [1] = { readyCheck = "ready",    isTarget = true },
+    [2] = { readyCheck = "waiting" },
+    [3] = { readyCheck = "notready" },
+    [4] = { status = "AFK" },
+    [5] = { status = "Dead" },
+}
+
 local function ApplyRoleIcon(icon, role, size)
     icon:SetSize(size, size)
     local atlas = ROLE_ATLAS[role]
@@ -105,7 +120,7 @@ local function AddFakeAuras(f, auraDb, isDebuff, gap)
     end
 end
 
-local function BuildDummyFrame(db, name, role)
+local function BuildDummyFrame(db, name, role, opts)
     local UUF    = UUFPLUS.UUF
     local w, h   = db.Frame.Width, db.Frame.Height
     local powerH = db.PowerBar.Enabled and db.PowerBar.Height or 0
@@ -192,6 +207,57 @@ local function BuildDummyFrame(db, name, role)
         AddFakeAuras(f, db.Auras, false, healthGap)
     end
 
+    -- Target glow border
+    if db.Indicators and db.Indicators.Target then
+        local tDb = db.Indicators.Target
+        local tglow = CreateFrame("Frame", nil, f, "BackdropTemplate")
+        tglow:SetFrameLevel(f:GetFrameLevel() + 101)
+        tglow:SetBackdrop({
+            edgeFile = "Interface\\AddOns\\UnhaltedUnitFrames\\Media\\Textures\\Glow.tga",
+            edgeSize = 3,
+            insets   = { left = -3, right = -3, top = -3, bottom = -3 },
+        })
+        tglow:SetBackdropColor(0, 0, 0, 0)
+        local C = tDb.Colour
+        tglow:SetBackdropBorderColor(C[1], C[2], C[3], C[4] or 1)
+        tglow:SetPoint("TOPLEFT",     f, "TOPLEFT",     -3,  3)
+        tglow:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT",  3, -3)
+        tglow:SetAlpha((tDb.Enabled and opts and opts.isTarget) and 1 or 0)
+    end
+
+    -- Status text (matches live frame: parented to health, centred on frame)
+    local statusTxt = health:CreateFontString(nil, "OVERLAY")
+    statusTxt:SetFont(UUF.Media.Font, db.OfflineFontSize or 10, UUF.Media.FontFlag)
+    local SL = db.StatusText and db.StatusText.Layout
+    statusTxt:SetPoint(SL and SL[1] or "CENTER", f, SL and SL[2] or "CENTER", SL and SL[3] or 0, SL and SL[4] or 0)
+    statusTxt:Hide()
+    f._statusTxt = statusTxt
+    if opts and opts.status then
+        local s = opts.status
+        statusTxt:SetText(s)
+        if     s == "Dead"  then statusTxt:SetTextColor(0.75, 0.2,  0.2)
+        elseif s == "Ghost" then statusTxt:SetTextColor(0.6,  0.4,  0.8)
+        elseif s == "AFK"   then statusTxt:SetTextColor(0.8,  0.8,  0.2)
+        else                     statusTxt:SetTextColor(0.8,  0.8,  0.8) end
+        statusTxt:Show()
+    end
+
+    -- Ready check indicator (needs highContainer so it renders above the health bar)
+    if opts and opts.readyCheck then
+        local atlas = READY_CHECK_ATLAS[opts.readyCheck]
+        if atlas then
+            local highContainer = CreateFrame("Frame", nil, f)
+            highContainer:SetAllPoints(f)
+            highContainer:SetFrameLevel(f:GetFrameLevel() + 100)
+            local RL = db.ReadyCheck and db.ReadyCheck.Layout
+            local sz = (db.ReadyCheck and db.ReadyCheck.Size) or 14
+            local rci = highContainer:CreateTexture(nil, "OVERLAY")
+            rci:SetSize(sz, sz)
+            rci:SetPoint(RL and RL[1] or "CENTER", f, RL and RL[2] or "CENTER", RL and RL[3] or 0, RL and RL[4] or 0)
+            rci:SetAtlas(atlas)
+        end
+    end
+
     return f
 end
 
@@ -203,8 +269,29 @@ function UUFPLUS:IsRaidPreviewShown()
     return #raidPreviews > 0
 end
 
+local function hideHeaderAndChildren(header)
+    if not header then return end
+    header:Hide()
+    local children = {header:GetChildren()}
+    for i = 1, #children do
+        children[i]:SetAlpha(0)
+        children[i]:EnableMouse(false)
+    end
+end
+
+local function showHeaderAndChildren(header)
+    if not header then return end
+    header:Show()
+    local children = {header:GetChildren()}
+    for i = 1, #children do
+        children[i]:SetAlpha(1)
+        children[i]:EnableMouse(true)
+    end
+end
+
 function UUFPLUS:ShowPartyPreview()
     if #partyPreviews > 0 then return end
+    hideHeaderAndChildren(UUFPLUS.PartyHeader)
     local db      = UUFPLUS.db.profile.Party
     local spacing = db.Frame.Spacing
     local layout  = db.Frame.Layout
@@ -227,7 +314,7 @@ function UUFPLUS:ShowPartyPreview()
 
     local prev = nil
     for i = 1, 5 do
-        local f = BuildDummyFrame(db, PARTY_NAMES[i], GetPreviewRole(i))
+        local f = BuildDummyFrame(db, PARTY_NAMES[i], GetPreviewRole(i), PREVIEW_OPTS[i])
         f:EnableMouse(true)
         f:RegisterForDrag("LeftButton")
         if i == 1 then
@@ -249,10 +336,13 @@ end
 function UUFPLUS:HidePartyPreview()
     for _, f in ipairs(partyPreviews) do f:Hide() end
     partyPreviews = {}
+    local db = UUFPLUS.db.profile.Party
+    if db.Enabled then showHeaderAndChildren(UUFPLUS.PartyHeader) end
 end
 
 function UUFPLUS:ShowRaidPreview()
     if #raidPreviews > 0 then return end
+    hideHeaderAndChildren(UUFPLUS.RaidHeader)
     local db     = UUFPLUS.db.profile.Raid
     local w, h   = db.Frame.Width, db.Frame.Height
     local sx, sy = db.Frame.SpacingX, db.Frame.SpacingY
@@ -296,7 +386,7 @@ function UUFPLUS:ShowRaidPreview()
         for row = 0, upc - 1 do
             idx = idx + 1
             if idx > 40 then break end
-            local f = BuildDummyFrame(db, RAID_NAMES[idx] or ("P" .. idx), GetPreviewRole(idx))
+            local f = BuildDummyFrame(db, RAID_NAMES[idx] or ("P" .. idx), GetPreviewRole(idx), PREVIEW_OPTS[((idx - 1) % 5) + 1])
             f:EnableMouse(true)
             f:RegisterForDrag("LeftButton")
             f:SetScript("OnDragStart", function(self) raidPreviews[1]:StartMoving() end)
@@ -317,4 +407,6 @@ end
 function UUFPLUS:HideRaidPreview()
     for _, f in ipairs(raidPreviews) do f:Hide() end
     raidPreviews = {}
+    local db = UUFPLUS.db.profile.Raid
+    if db.Enabled then showHeaderAndChildren(UUFPLUS.RaidHeader) end
 end

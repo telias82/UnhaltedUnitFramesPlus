@@ -377,15 +377,63 @@ local function UpdateTags(dbKey)
 end
 
 local function UpdateOfflineText(dbKey)
-    local header = dbKey == "Party" and UUFPLUS.PartyHeader or UUFPLUS.RaidHeader
-    if not header then return end
     local db  = UUFPLUS.db.profile[dbKey]
     local UUF = UUFPLUS.UUF
-    IterateChildren(header, function(child)
-        if child._offlineTxt then
-            child._offlineTxt:SetFont(UUF.Media.Font, db.OfflineFontSize or 10, UUF.Media.FontFlag)
-        end
-    end)
+    local SL  = db.StatusText and db.StatusText.Layout
+    local header = dbKey == "Party" and UUFPLUS.PartyHeader or UUFPLUS.RaidHeader
+    if header then
+        IterateChildren(header, function(child)
+            if child._statusTxt then
+                child._statusTxt:SetFont(UUF.Media.Font, db.OfflineFontSize or 10, UUF.Media.FontFlag)
+                if SL then
+                    child._statusTxt:ClearAllPoints()
+                    child._statusTxt:SetPoint(SL[1] or "CENTER", child, SL[2] or "CENTER", SL[3] or 0, SL[4] or 0)
+                end
+            end
+        end)
+    end
+    UUFPLUS:RefreshPreviewIfShown(dbKey)
+end
+
+local function UpdateReadyCheck(dbKey)
+    local db = UUFPLUS.db.profile[dbKey]
+    local RC = db.ReadyCheck
+    local RL = RC and RC.Layout
+    local sz = (RC and RC.Size) or 16
+    local header = dbKey == "Party" and UUFPLUS.PartyHeader or UUFPLUS.RaidHeader
+    if header and RL then
+        IterateChildren(header, function(child)
+            local rci = child.ReadyCheckIndicator
+            if rci then
+                rci:SetSize(sz, sz)
+                rci:ClearAllPoints()
+                rci:SetPoint(RL[1] or "CENTER", child, RL[2] or "CENTER", RL[3] or 0, RL[4] or 0)
+            end
+        end)
+    end
+    UUFPLUS:RefreshPreviewIfShown(dbKey)
+end
+
+local function UpdateTargetGlow(dbKey)
+    local db   = UUFPLUS.db.profile[dbKey]
+    local tDb  = db.Indicators.Target
+    local header = dbKey == "Party" and UUFPLUS.PartyHeader or UUFPLUS.RaidHeader
+    if header then
+        IterateChildren(header, function(child)
+            if child._targetGlow then
+                if tDb then
+                    local C = tDb.Colour
+                    child._targetGlow:SetBackdropBorderColor(C[1], C[2], C[3], C[4] or 1)
+                end
+                if tDb and tDb.Enabled and child.unit and UnitIsUnit(child.unit, "target") then
+                    child._targetGlow:SetAlpha(1)
+                else
+                    child._targetGlow:SetAlpha(0)
+                end
+            end
+        end)
+    end
+    UUFPLUS:RefreshPreviewIfShown(dbKey)
 end
 
 local function UpdateIndicators(dbKey)
@@ -744,6 +792,9 @@ local function RenderOneIndicator(container, dbKey, indKey, label)
         AddToggle(container, "Hide DPS Icon", "Show role icon only for tanks and healers",
             function() return ind.HideDPS end,
             function(v) ind.HideDPS = v; UpdateIndicators(dbKey) end)
+        AddToggle(container, "Hide in Combat", "Hide role icon while in combat",
+            function() return ind.HideInCombat end,
+            function(v) ind.HideInCombat = v; UpdateIndicators(dbKey) end)
     end
 
     AddSlider(container, "Size", 6, 32, 1,
@@ -794,8 +845,28 @@ local function RenderRaidMarkerTab(container, dbKey)
         function(v) mDb.Layout[4] = v; UpdateIndicators(dbKey) end)
 end
 
+local function RenderTargetIndicatorTab(container, dbKey)
+    local tDb = UUFPLUS.db.profile[dbKey].Indicators.Target
+
+    AddHeader(container, "Target Highlight")
+
+    AddToggle(container, "Enabled", "Show a glow border around the targeted unit's frame",
+        function() return tDb.Enabled end,
+        function(v) tDb.Enabled = v; UpdateTargetGlow(dbKey) end)
+
+    AddColorPicker(container, "Glow Color",
+        function() return tDb.Colour[1] end,
+        function() return tDb.Colour[2] end,
+        function() return tDb.Colour[3] end,
+        function(r, g, b)
+            tDb.Colour[1], tDb.Colour[2], tDb.Colour[3] = r, g, b
+            UpdateTargetGlow(dbKey)
+        end)
+end
+
 local function RenderIndicatorsTab(outerContainer, dbKey)
     local tabs = {
+        { text = "Target",      value = "Target"     },
         { text = "Group Role",  value = "GroupRole"  },
         { text = "Leader",      value = "Leader"      },
         { text = "Assistant",   value = "Assistant"   },
@@ -817,7 +888,9 @@ local function RenderIndicatorsTab(outerContainer, dbKey)
     tg:SetCallback("OnGroupSelected", function(widget, _, selected)
         widget:ReleaseChildren()
         local scroll = CreateScrollFrame(widget)
-        if selected == "RaidMarker" then
+        if selected == "Target" then
+            RenderTargetIndicatorTab(scroll, dbKey)
+        elseif selected == "RaidMarker" then
             RenderRaidMarkerTab(scroll, dbKey)
         else
             RenderOneIndicator(scroll, dbKey, selected, labels[selected])
@@ -825,7 +898,7 @@ local function RenderIndicatorsTab(outerContainer, dbKey)
         scroll:DoLayout()
     end)
     outerContainer:AddChild(tg)
-    tg:SelectTab("GroupRole")
+    tg:SelectTab("Target")
 end
 
 -- ── tag sub-tab builder ───────────────────────────────────────────────────────
@@ -876,8 +949,9 @@ end
 
 local function RenderTagsTab(outerContainer, dbKey)
     local tabs = {
-        { text = "Name",    value = "Name"    },
-        { text = "Offline", value = "Offline" },
+        { text = "Name",        value = "Name"        },
+        { text = "Status Text", value = "StatusText"  },
+        { text = "Ready Check", value = "ReadyCheck"  },
     }
     if dbKey == "Party" then
         table.insert(tabs, 2, { text = "HP", value = "HP" })
@@ -893,11 +967,42 @@ local function RenderTagsTab(outerContainer, dbKey)
     tg:SetCallback("OnGroupSelected", function(widget, _, selected)
         widget:ReleaseChildren()
         local scroll = CreateScrollFrame(widget)
-        if selected == "Offline" then
-            AddHeader(scroll, "Offline Text")
+        if selected == "StatusText" then
+            AddHeader(scroll, "Status Text (Offline / Dead / Ghost / AFK)")
             AddSlider(scroll, "Font Size", 6, 24, 1,
                 function() return UUFPLUS.db.profile[dbKey].OfflineFontSize or 10 end,
                 function(v) UUFPLUS.db.profile[dbKey].OfflineFontSize = v; UpdateOfflineText(dbKey) end)
+            AddHeader(scroll, "Position (relative to frame)")
+            AddDropdown(scroll, "Anchor From", AnchorPoints[1], AnchorPoints[2],
+                function() return UUFPLUS.db.profile[dbKey].StatusText.Layout[1] or "CENTER" end,
+                function(v) UUFPLUS.db.profile[dbKey].StatusText.Layout[1] = v; UpdateOfflineText(dbKey) end)
+            AddDropdown(scroll, "Anchor To (frame)", AnchorPoints[1], AnchorPoints[2],
+                function() return UUFPLUS.db.profile[dbKey].StatusText.Layout[2] or "CENTER" end,
+                function(v) UUFPLUS.db.profile[dbKey].StatusText.Layout[2] = v; UpdateOfflineText(dbKey) end)
+            AddSlider(scroll, "X Offset", -200, 200, 1,
+                function() return UUFPLUS.db.profile[dbKey].StatusText.Layout[3] or 0 end,
+                function(v) UUFPLUS.db.profile[dbKey].StatusText.Layout[3] = v; UpdateOfflineText(dbKey) end)
+            AddSlider(scroll, "Y Offset", -200, 200, 1,
+                function() return UUFPLUS.db.profile[dbKey].StatusText.Layout[4] or 0 end,
+                function(v) UUFPLUS.db.profile[dbKey].StatusText.Layout[4] = v; UpdateOfflineText(dbKey) end)
+        elseif selected == "ReadyCheck" then
+            AddHeader(scroll, "Ready Check Indicator")
+            AddSlider(scroll, "Size", 8, 40, 1,
+                function() return UUFPLUS.db.profile[dbKey].ReadyCheck.Size or 16 end,
+                function(v) UUFPLUS.db.profile[dbKey].ReadyCheck.Size = v; UpdateReadyCheck(dbKey) end)
+            AddHeader(scroll, "Position (relative to frame)")
+            AddDropdown(scroll, "Anchor From", AnchorPoints[1], AnchorPoints[2],
+                function() return UUFPLUS.db.profile[dbKey].ReadyCheck.Layout[1] or "CENTER" end,
+                function(v) UUFPLUS.db.profile[dbKey].ReadyCheck.Layout[1] = v; UpdateReadyCheck(dbKey) end)
+            AddDropdown(scroll, "Anchor To (frame)", AnchorPoints[1], AnchorPoints[2],
+                function() return UUFPLUS.db.profile[dbKey].ReadyCheck.Layout[2] or "CENTER" end,
+                function(v) UUFPLUS.db.profile[dbKey].ReadyCheck.Layout[2] = v; UpdateReadyCheck(dbKey) end)
+            AddSlider(scroll, "X Offset", -200, 200, 1,
+                function() return UUFPLUS.db.profile[dbKey].ReadyCheck.Layout[3] or 0 end,
+                function(v) UUFPLUS.db.profile[dbKey].ReadyCheck.Layout[3] = v; UpdateReadyCheck(dbKey) end)
+            AddSlider(scroll, "Y Offset", -200, 200, 1,
+                function() return UUFPLUS.db.profile[dbKey].ReadyCheck.Layout[4] or 0 end,
+                function(v) UUFPLUS.db.profile[dbKey].ReadyCheck.Layout[4] = v; UpdateReadyCheck(dbKey) end)
         else
             RenderOneTag(scroll, dbKey, selected, labels[selected])
         end
